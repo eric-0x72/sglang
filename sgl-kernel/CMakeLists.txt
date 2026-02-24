@@ -124,15 +124,21 @@ if(CCACHE_FOUND AND ENABLE_CCACHE AND DEFINED ENV{CCACHE_DIR})
     set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK "ccache")
 endif()
 
-# Configure gencode below SM90
+# Configure gencode below SM90 and base arch
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
     set(DEFAULT_ENABLE_BELOW_SM90 OFF)
-    message(STATUS "For aarch64, disable gencode below SM90 by default")
+    set(DEFAULT_SGL_KERNEL_BASE_CUDA_ARCH 87)
+    set(DEFAULT_BUILD_SM90 OFF)
+    message(STATUS "For aarch64, default to base arch sm_87 and skip SM90 build")
 else()
     set(DEFAULT_ENABLE_BELOW_SM90 ON)
+    set(DEFAULT_SGL_KERNEL_BASE_CUDA_ARCH 90)
+    set(DEFAULT_BUILD_SM90 ON)
 endif()
 
 option(ENABLE_BELOW_SM90 "Enable gencode below SM90" ${DEFAULT_ENABLE_BELOW_SM90})
+set(SGL_KERNEL_BASE_CUDA_ARCH ${DEFAULT_SGL_KERNEL_BASE_CUDA_ARCH} CACHE STRING "Base CUDA arch for common_ops build")
+option(SGL_KERNEL_BUILD_SM90 "Build SM90 fast-math variant" ${DEFAULT_BUILD_SM90})
 
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
@@ -145,7 +151,7 @@ set(SGL_KERNEL_CUDA_FLAGS
     "-O3"
     "-Xcompiler"
     "-fPIC"
-    "-gencode=arch=compute_90,code=sm_90"
+    "-gencode=arch=compute_${SGL_KERNEL_BASE_CUDA_ARCH},code=sm_${SGL_KERNEL_BASE_CUDA_ARCH}"
     "-std=c++17"
     "-DFLASHINFER_ENABLE_F16"
     "-DCUTE_USE_PACKED_TUPLE=1"
@@ -225,7 +231,7 @@ if (ENABLE_BELOW_SM90)
 
 endif()
 
-if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_SM100A)
+if (("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_SM100A) AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
     list(APPEND SGL_KERNEL_CUDA_FLAGS
         "-gencode=arch=compute_100a,code=sm_100a"
         "-gencode=arch=compute_120a,code=sm_120a"
@@ -251,11 +257,15 @@ if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_SM100A)
     endif()
 endif()
 
-if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.4")
+if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.4" AND SGL_KERNEL_BUILD_SM90)
     set(SGL_KERNEL_ENABLE_FA3 ON)
     list(APPEND SGL_KERNEL_CUDA_FLAGS
         "-gencode=arch=compute_90a,code=sm_90a"
     )
+endif()
+
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(SGL_KERNEL_ENABLE_FA3 OFF)
 endif()
 
 if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_FP4)
@@ -283,8 +293,6 @@ set(SOURCES
     "csrc/elementwise/pos_enc.cu"
     "csrc/elementwise/topk.cu"
     "csrc/expert_specialization/es_fp8_blockwise.cu"
-    "csrc/expert_specialization/es_sm100_mxfp8_blockscaled.cu"
-    "csrc/expert_specialization/es_sm100_mxfp8_blockscaled_group_quant.cu"
 
     "csrc/gemm/awq_kernel.cu"
     "csrc/gemm/bmm_fp8.cu"
@@ -295,11 +303,6 @@ set(SOURCES
     "csrc/gemm/fp8_blockwise_gemm_kernel.cu"
     "csrc/gemm/fp8_gemm_kernel.cu"
     "csrc/gemm/int8_gemm_kernel.cu"
-    "csrc/gemm/nvfp4_expert_quant.cu"
-    "csrc/gemm/nvfp4_quant_entry.cu"
-    "csrc/gemm/nvfp4_quant_kernels.cu"
-    "csrc/gemm/nvfp4_scaled_mm_entry.cu"
-    "csrc/gemm/nvfp4_scaled_mm_kernels.cu"
     "csrc/gemm/per_tensor_quant_fp8.cu"
     "csrc/gemm/per_token_group_quant_8bit.cu"
     "csrc/gemm/per_token_group_quant_8bit_v2.cu"
@@ -320,7 +323,6 @@ set(SOURCES
     "csrc/moe/cutlass_moe/w4a8/scaled_mm_entry.cu"
     "csrc/moe/cutlass_moe/w4a8/w4a8_moe_data.cu"
     "csrc/moe/cutlass_moe/w4a8/w4a8_grouped_mm_c3x.cu"
-    "csrc/moe/marlin_moe_wna16/ops.cu"
     "csrc/moe/moe_align_kernel.cu"
     "csrc/moe/moe_fused_gate.cu"
     "csrc/moe/fused_qknorm_rope_kernel.cu"
@@ -329,7 +331,6 @@ set(SOURCES
     "csrc/moe/moe_sum_reduce.cu"
     "csrc/moe/moe_topk_softmax_kernels.cu"
     "csrc/moe/moe_topk_sigmoid_kernels.cu"
-    "csrc/moe/nvfp4_blockwise_moe.cu"
     "csrc/moe/fp8_blockwise_moe_kernel.cu"
     "csrc/moe/prepare_moe_input.cu"
 
@@ -353,6 +354,55 @@ set(SOURCES
     "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/flash_sparse_api.cpp"
 )
 
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(DEFAULT_ENABLE_MARLIN_WNA16 OFF)
+else()
+    set(DEFAULT_ENABLE_MARLIN_WNA16 ON)
+endif()
+option(SGL_KERNEL_ENABLE_MARLIN_WNA16 "Enable marlin moe wna16 kernels" ${DEFAULT_ENABLE_MARLIN_WNA16})
+
+set(MARLIN_WNA16_SOURCES
+    "csrc/moe/marlin_moe_wna16/ops.cu"
+)
+
+set(SGL_KERNEL_HAS_MARLIN_WNA16_OPS OFF)
+if (SGL_KERNEL_ENABLE_MARLIN_WNA16)
+    list(APPEND SOURCES ${MARLIN_WNA16_SOURCES})
+    set(SGL_KERNEL_HAS_MARLIN_WNA16_OPS ON)
+else()
+    message(STATUS "Skipping marlin_moe_wna16 sources (disabled)")
+endif()
+
+set(NVFP4_ONLY_SOURCES
+    "csrc/gemm/nvfp4_expert_quant.cu"
+    "csrc/gemm/nvfp4_quant_entry.cu"
+    "csrc/gemm/nvfp4_quant_kernels.cu"
+    "csrc/gemm/nvfp4_scaled_mm_entry.cu"
+    "csrc/gemm/nvfp4_scaled_mm_kernels.cu"
+    "csrc/moe/nvfp4_blockwise_moe.cu"
+)
+
+set(SGL_KERNEL_HAS_FP4_OPS OFF)
+if (("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_FP4) AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    list(APPEND SOURCES ${NVFP4_ONLY_SOURCES})
+    set(SGL_KERNEL_HAS_FP4_OPS ON)
+else()
+    message(STATUS "Skipping NVFP4 sources (CUDA < 12.8/FP4 disabled or aarch64)")
+endif()
+
+set(SM100_ONLY_SOURCES
+    "csrc/expert_specialization/es_sm100_mxfp8_blockscaled.cu"
+    "csrc/expert_specialization/es_sm100_mxfp8_blockscaled_group_quant.cu"
+)
+
+set(SGL_KERNEL_HAS_SM100_OPS OFF)
+if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_SM100A)
+    list(APPEND SOURCES ${SM100_ONLY_SOURCES})
+    set(SGL_KERNEL_HAS_SM100_OPS ON)
+else()
+    message(STATUS "Skipping SM100-only sources (CUDA < 12.8 and SM100A disabled)")
+endif()
+
 set(INCLUDES
     ${repo-cutlass_SOURCE_DIR}/include
     ${repo-cutlass_SOURCE_DIR}/tools/util/include
@@ -366,21 +416,29 @@ set(INCLUDES
 
 # =========================== Common SM90 Build ============================= #
 # Build SM90 library with fast math optimization (same namespace, different directory)
-Python_add_library(common_ops_sm90_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
+if (SGL_KERNEL_BUILD_SM90)
+    Python_add_library(common_ops_sm90_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
 
-target_compile_options(common_ops_sm90_build PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS} -use_fast_math>
-)
-target_include_directories(common_ops_sm90_build PRIVATE ${INCLUDES})
-# Set output name and separate build directory to avoid conflicts
-set_target_properties(common_ops_sm90_build PROPERTIES
-    OUTPUT_NAME "common_ops"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm90"
-)
+    target_compile_options(common_ops_sm90_build PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS} -use_fast_math>
+    )
+    target_include_directories(common_ops_sm90_build PRIVATE ${INCLUDES})
+    # Set output name and separate build directory to avoid conflicts
+    set_target_properties(common_ops_sm90_build PROPERTIES
+        OUTPUT_NAME "common_ops"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm90"
+    )
+endif()
 
 # =========================== Common SM100+ Build ============================= #
-# Build SM100+ library with precise math (same namespace, different directory)
+# Build precise-math library (same namespace, different directory)
 Python_add_library(common_ops_sm100_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
+
+if (SGL_KERNEL_BUILD_SM90)
+    set(SGL_KERNEL_PRECISE_SUBDIR "sm100")
+else()
+    set(SGL_KERNEL_PRECISE_SUBDIR "sm${SGL_KERNEL_BASE_CUDA_ARCH}")
+endif()
 
 target_compile_options(common_ops_sm100_build PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS}>
@@ -389,7 +447,7 @@ target_include_directories(common_ops_sm100_build PRIVATE ${INCLUDES})
 # Set output name and separate build directory to avoid conflicts
 set_target_properties(common_ops_sm100_build PROPERTIES
     OUTPUT_NAME "common_ops"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm100"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${SGL_KERNEL_PRECISE_SUBDIR}"
 )
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -417,31 +475,55 @@ add_subdirectory(
     ${CMAKE_CURRENT_BINARY_DIR}/mscclpp-build
 )
 
-target_link_libraries(common_ops_sm90_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
+if (SGL_KERNEL_BUILD_SM90)
+    target_link_libraries(common_ops_sm90_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
+endif()
 target_link_libraries(common_ops_sm100_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
 
 # sparse flash attention
-target_compile_definitions(common_ops_sm90_build PRIVATE
-    FLASHATTENTION_DISABLE_BACKWARD
-    FLASHATTENTION_DISABLE_DROPOUT
-    FLASHATTENTION_DISABLE_UNEVEN_K
-)
+if (SGL_KERNEL_BUILD_SM90)
+    target_compile_definitions(common_ops_sm90_build PRIVATE
+        FLASHATTENTION_DISABLE_BACKWARD
+        FLASHATTENTION_DISABLE_DROPOUT
+        FLASHATTENTION_DISABLE_UNEVEN_K
+    )
+    if (SGL_KERNEL_HAS_FP4_OPS)
+        target_compile_definitions(common_ops_sm90_build PRIVATE SGL_KERNEL_HAS_FP4_OPS)
+    endif()
+    if (SGL_KERNEL_HAS_MARLIN_WNA16_OPS)
+        target_compile_definitions(common_ops_sm90_build PRIVATE SGL_KERNEL_HAS_MARLIN_WNA16_OPS)
+    endif()
+    if (SGL_KERNEL_HAS_SM100_OPS)
+        target_compile_definitions(common_ops_sm90_build PRIVATE SGL_KERNEL_HAS_SM100_OPS)
+    endif()
+endif()
 target_compile_definitions(common_ops_sm100_build PRIVATE
     FLASHATTENTION_DISABLE_BACKWARD
     FLASHATTENTION_DISABLE_DROPOUT
     FLASHATTENTION_DISABLE_UNEVEN_K
 )
+if (SGL_KERNEL_HAS_FP4_OPS)
+    target_compile_definitions(common_ops_sm100_build PRIVATE SGL_KERNEL_HAS_FP4_OPS)
+endif()
+if (SGL_KERNEL_HAS_MARLIN_WNA16_OPS)
+    target_compile_definitions(common_ops_sm100_build PRIVATE SGL_KERNEL_HAS_MARLIN_WNA16_OPS)
+endif()
+if (SGL_KERNEL_HAS_SM100_OPS)
+    target_compile_definitions(common_ops_sm100_build PRIVATE SGL_KERNEL_HAS_SM100_OPS)
+endif()
 
 # Install to different subdirectories
 # CMake will find the built libraries in their respective LIBRARY_OUTPUT_DIRECTORY locations
 # and install them to the specified destinations
-install(TARGETS common_ops_sm90_build LIBRARY DESTINATION sgl_kernel/sm90)
-install(TARGETS common_ops_sm100_build LIBRARY DESTINATION sgl_kernel/sm100)
+if (SGL_KERNEL_BUILD_SM90)
+    install(TARGETS common_ops_sm90_build LIBRARY DESTINATION sgl_kernel/sm90)
+endif()
+install(TARGETS common_ops_sm100_build LIBRARY DESTINATION sgl_kernel/${SGL_KERNEL_PRECISE_SUBDIR})
 
 # ============================ Optional Install: FA3 ============================= #
 # set flash-attention sources file
 # Now FA3 support sm80/sm86/sm90
-if (SGL_KERNEL_ENABLE_FA3)
+if (SGL_KERNEL_ENABLE_FA3 AND SGL_KERNEL_BUILD_SM90)
     set(SGL_FLASH_KERNEL_CUDA_FLAGS
         "-DNDEBUG"
         "-DOPERATOR_NAMESPACE=sgl-kernel"
@@ -539,7 +621,11 @@ target_link_libraries(spatial_ops PRIVATE ${TORCH_LIBRARIES} c10 cuda)
 install(TARGETS spatial_ops LIBRARY DESTINATION sgl_kernel)
 
 # ============================ Extra Install: FLashMLA ============================= #
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/flashmla.cmake)
+if (SGL_KERNEL_BUILD_SM90)
+    include(${CMAKE_CURRENT_LIST_DIR}/cmake/flashmla.cmake)
+else()
+    message(STATUS "Skipping FlashMLA build (SM90 build disabled)")
+endif()
 
 # ============================ Extra Install: DeepGEMM (JIT) ============================= #
 # Create a separate library for DeepGEMM's Python API.

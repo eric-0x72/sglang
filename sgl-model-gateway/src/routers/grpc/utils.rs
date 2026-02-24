@@ -983,9 +983,8 @@ pub(crate) fn convert_generate_input_logprobs(
 
 /// Parse finish_reason string into GenerateFinishReason enum
 ///
-/// Uses serde to deserialize the finish_reason, which handles all tagged variants automatically.
-/// The GenerateFinishReason enum is tagged with `#[serde(tag = "type", rename_all = "lowercase")]`,
-/// so it expects JSON objects like:
+/// Uses serde to deserialize the finish_reason, which handles tagged variants.
+/// The GenerateFinishReason enum expects JSON objects like:
 /// - `{"type":"stop"}` -> Stop
 /// - `{"type":"length","length":100}` -> Length { length: 100 }
 /// - Any other JSON -> Other(...)

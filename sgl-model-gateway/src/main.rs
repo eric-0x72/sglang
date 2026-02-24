@@ -819,6 +819,7 @@ impl CliArgs {
         Ok(OracleConfig {
             wallet_path,
             connect_descriptor,
+            external_auth: false,
             username,
             password,
             pool_min,

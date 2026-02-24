@@ -56,60 +56,68 @@ def _load_architecture_specific_ops():
     sgl_kernel_dir = Path(__file__).parent
     logger.debug(f"[sgl_kernel] sgl_kernel directory: {sgl_kernel_dir}")
 
-    # Determine which version to load based on GPU architecture
+    # Determine which version to load based on GPU architecture.
+    # Prefer an exact SM match when available (e.g., sm87 on Jetson Orin).
     if compute_capability == 90:
-        ops_subdir = "sm90"
-        variant_name = "SM90 (Hopper/H100 with fast math optimization)"
+        candidates = [("sm90", "SM90 (Hopper/H100 with fast math optimization)")]
     elif compute_capability is not None:
-        ops_subdir = "sm100"
-        variant_name = f"SM{compute_capability} (precise math for compatibility)"
+        candidates = [
+            (f"sm{compute_capability}", f"SM{compute_capability} (native build)"),
+            ("sm100", "SM100 (precise math for compatibility)"),
+        ]
     else:
-        ops_subdir = "sm100"
-        variant_name = "CPU/No GPU detected (using precise math)"
+        candidates = [("sm100", "CPU/No GPU detected (using precise math)")]
 
     # Look for the compiled module with any valid extension
 
-    ops_pattern = str(sgl_kernel_dir / ops_subdir / "common_ops.*")
-    raw_matching_files = glob.glob(ops_pattern)
-    matching_files = _filter_compiled_extensions(raw_matching_files)
-
-    logger.debug(f"[sgl_kernel] Attempting to load {variant_name}")
-    logger.debug(f"[sgl_kernel] Looking for library matching pattern: {ops_pattern}")
-    logger.debug(f"[sgl_kernel] Found files: {raw_matching_files}")
-    logger.debug(f"[sgl_kernel] Prioritized files: {matching_files}")
-
     previous_import_errors: List[Exception] = []
 
-    # Try to load from the architecture-specific directory
-    if matching_files:
-        ops_path = Path(matching_files[0])  # Use the first prioritized file
-        logger.debug(f"[sgl_kernel] Found architecture-specific library: {ops_path}")
-        try:
-            # Load the module from specific path using importlib
-            spec = importlib.util.spec_from_file_location("common_ops", str(ops_path))
-            if spec is None:
-                raise ImportError(f"Could not create module spec for {ops_path}")
+    for ops_subdir, variant_name in candidates:
+        ops_pattern = str(sgl_kernel_dir / ops_subdir / "common_ops.*")
+        raw_matching_files = glob.glob(ops_pattern)
+        matching_files = _filter_compiled_extensions(raw_matching_files)
 
-            common_ops = importlib.util.module_from_spec(spec)
-            if spec.loader is None:
-                raise ImportError(f"Module spec has no loader for {ops_path}")
-
-            logger.debug(f"[sgl_kernel] Loading module from {ops_path}...")
-            spec.loader.exec_module(common_ops)
-            logger.debug(f"[sgl_kernel] ✓ Successfully loaded {variant_name}")
-            logger.debug(f"[sgl_kernel] ✓ Module file: {common_ops.__file__}")
-            return common_ops
-
-        except Exception as e:
-            previous_import_errors.append(e)
-            logger.debug(
-                f"[sgl_kernel] ✗ Failed to load from {ops_path}: {type(e).__name__}: {e}"
-            )
-            # Continue to fallback
-    else:
+        logger.debug(f"[sgl_kernel] Attempting to load {variant_name}")
         logger.debug(
-            f"[sgl_kernel] ✗ Architecture-specific library not found matching pattern: {ops_pattern}"
+            f"[sgl_kernel] Looking for library matching pattern: {ops_pattern}"
         )
+        logger.debug(f"[sgl_kernel] Found files: {raw_matching_files}")
+        logger.debug(f"[sgl_kernel] Prioritized files: {matching_files}")
+
+        # Try to load from the architecture-specific directory
+        if matching_files:
+            ops_path = Path(matching_files[0])  # Use the first prioritized file
+            logger.debug(
+                f"[sgl_kernel] Found architecture-specific library: {ops_path}"
+            )
+            try:
+                # Load the module from specific path using importlib
+                spec = importlib.util.spec_from_file_location(
+                    "common_ops", str(ops_path)
+                )
+                if spec is None:
+                    raise ImportError(f"Could not create module spec for {ops_path}")
+
+                common_ops = importlib.util.module_from_spec(spec)
+                if spec.loader is None:
+                    raise ImportError(f"Module spec has no loader for {ops_path}")
+
+                logger.debug(f"[sgl_kernel] Loading module from {ops_path}...")
+                spec.loader.exec_module(common_ops)
+                logger.debug(f"[sgl_kernel] ✓ Successfully loaded {variant_name}")
+                logger.debug(f"[sgl_kernel] ✓ Module file: {common_ops.__file__}")
+                return common_ops
+
+            except Exception as e:
+                previous_import_errors.append(e)
+                logger.debug(
+                    f"[sgl_kernel] ✗ Failed to load from {ops_path}: {type(e).__name__}: {e}"
+                )
+                # Continue to next candidate
+        else:
+            logger.debug(
+                f"[sgl_kernel] ✗ Architecture-specific library not found matching pattern: {ops_pattern}"
+            )
 
     # Try alternative directory (in case installation structure differs)
     alt_pattern = str(sgl_kernel_dir / "common_ops.*")
@@ -170,13 +178,14 @@ def _load_architecture_specific_ops():
 [sgl_kernel] CRITICAL: Could not load any common_ops library!
 
 Attempted locations:
-1. Architecture-specific pattern: {ops_pattern} - found files: {matching_files}
+1. Architecture-specific pattern(s): {[str(sgl_kernel_dir / c[0] / 'common_ops.*') for c in candidates]} 
+   - found files: {[glob.glob(str(sgl_kernel_dir / c[0] / 'common_ops.*')) for c in candidates]}
 2. Fallback pattern: {alt_pattern} - found files: {alt_matching_files}
 3. Standard Python import: common_ops - failed
 
 GPU Info:
 - Compute capability: {compute_capability}
-- Expected variant: {variant_name}
+- Expected variant(s): {', '.join(v for _, v in candidates)}
 
 Please ensure sgl_kernel is properly installed with:
 pip install --upgrade sgl_kernel

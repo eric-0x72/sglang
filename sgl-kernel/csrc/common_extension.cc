@@ -157,6 +157,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   m.def("sgl_per_token_quant_fp8(Tensor input, Tensor! output_q, Tensor! output_s) -> ()");
   m.impl("sgl_per_token_quant_fp8", torch::kCUDA, &sgl_per_token_quant_fp8);
 
+#if defined(SGL_KERNEL_HAS_FP4_OPS)
   m.def(
       "cutlass_scaled_fp4_mm(Tensor! out, Tensor a, Tensor b,"
       "                      Tensor block_scale_a, Tensor block_scale_b,"
@@ -189,6 +190,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "Tensor ab_strides, Tensor c_strides, Tensor problem_sizes,"
       " Tensor expert_offsets, Tensor sf_offsets) -> ()");
   m.impl("cutlass_fp4_group_mm", torch::kCUDA, &cutlass_fp4_group_mm);
+#endif
 
   m.def("dsv3_router_gemm(Tensor! output, Tensor mat_a, Tensor mat_b) -> ()");
   m.impl("dsv3_router_gemm", torch::kCUDA, &dsv3_router_gemm);
@@ -304,6 +306,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   /*
    * From csrc/moe/marlin_moe_wna16
    */
+#if defined(SGL_KERNEL_HAS_MARLIN_WNA16_OPS)
   m.def(
       "moe_wna16_marlin_gemm(Tensor! a, Tensor? c_or_none,"
       "Tensor! b_q_weight, Tensor? b_bias_or_none, Tensor! b_scales,"
@@ -317,6 +320,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "bool is_k_full, bool use_atomic_add,"
       "bool use_fp32_reduce, bool is_zp_float) -> Tensor");
   m.impl("moe_wna16_marlin_gemm", torch::kCUDA, &moe_wna16_marlin_gemm);
+#endif
 
   /*
    * From csrc/speculative
@@ -583,6 +587,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "stride_a, Tensor stride_b, Tensor stride_d, Tensor problem_sizes, Tensor expert_offsets, Tensor workspace) -> "
       "()");
   m.impl("es_fp8_blockwise_scaled_grouped_mm", &es_fp8_blockwise_scaled_grouped_mm);
+#if defined(SGL_KERNEL_HAS_SM100_OPS)
   m.def(
       "es_sm100_mxfp8_blockscaled_grouped_mm(Tensor a, Tensor b, Tensor sfa, Tensor sfb, Tensor d, Tensor "
       "problem_sizes, Tensor expert_offsets, Tensor blockscale_offsets) -> ()");
@@ -591,6 +596,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "es_sm100_mxfp8_blockscaled_grouped_quant(Tensor input, Tensor problem_sizes, Tensor expert_offsets, Tensor "
       "blockscale_offsets, Tensor quant_output, Tensor scale_factor) -> () ");
   m.impl("es_sm100_mxfp8_blockscaled_grouped_quant", &es_sm100_mxfp8_blockscaled_grouped_quant);
+#endif
 
   /*
    * From fast-hadamard-transform

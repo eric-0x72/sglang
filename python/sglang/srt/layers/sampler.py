@@ -357,6 +357,7 @@ def top_k_top_p_min_p_sampling_from_probs_torch(
     When sampling_seed is not None, deterministic inference will be enabled, it will sample
     with the sampling_seed of each request.
     """
+    probs = _sanitize_probs_for_sampling(probs)
     probs_sort, probs_idx = probs.sort(dim=-1, descending=True)
     probs_sum = torch.cumsum(probs_sort, dim=-1)
     probs_sort[
@@ -469,6 +470,7 @@ def sampling_from_probs_torch(
 ):
     """A sampling implementation with native pytorch operations, without
     top-k, top-p, or min-p filtering."""
+    probs = _sanitize_probs_for_sampling(probs)
     if sampling_seed is not None:
         sampled_index = multinomial_with_seed(probs, sampling_seed, positions)
     else:
@@ -482,11 +484,34 @@ def top_p_normalize_probs_torch(
     top_ps: torch.Tensor,
 ):
     # See also top_k_top_p_min_p_sampling_from_probs_torch
+    # probs = _sanitize_probs_for_sampling(probs)
     probs_sort, probs_idx = probs.sort(dim=-1, descending=True)
     probs_sum = torch.cumsum(probs_sort, dim=-1)
     probs_sort[(probs_sum - probs_sort) > top_ps.view(-1, 1)] = 0.0
     probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
     return torch.zeros_like(probs_sort).scatter_(-1, probs_idx, probs_sort)
+
+
+# def _sanitize_probs_for_sampling(probs: torch.Tensor) -> torch.Tensor:
+#     """Ensure probabilities are finite, non-negative, and normalized per row."""
+#     if not torch.is_floating_point(probs):
+#         return probs
+
+#     invalid_mask = ~torch.isfinite(probs) | (probs < 0)
+#     if invalid_mask.any():
+#         probs = probs.clone()
+#         probs.masked_fill_(invalid_mask, 0.0)
+
+#     row_sum = probs.sum(dim=-1, keepdim=True)
+#     bad_rows = row_sum <= 0
+#     if bad_rows.any():
+#         # Fallback to uniform distribution when all probs are invalid/zero.
+#         probs = probs.clone()
+#         probs[bad_rows] = 1.0 / probs.shape[-1]
+#         row_sum = probs.sum(dim=-1, keepdim=True)
+
+#     probs = probs / row_sum
+#     return probs
 
 
 def get_token_ids_logprobs_batch_optimized(
